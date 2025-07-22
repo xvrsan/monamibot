@@ -1,50 +1,44 @@
-import requests
-from bs4 import BeautifulSoup
+import asyncio
+from playwright.async_api import async_playwright
 
-BASE_URL = "https://monami.network"
-APP_SIGNIN = "https://app.monami.io/users/sign_in"
+EMAIL = ""
+PASSWORD = ""
 
-def get_csrf_token(session, url):
-    resp = session.get(url)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    # Cari input hidden yang kemungkinan berisi CSRF/token nonce
-    token_input = soup.find("input", {"type": "hidden", "name": True, "value": True})
-    if token_input:
-        return token_input["name"], token_input["value"]
-    return None, None
+async def run():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)  # Ubah ke True jika tidak ingin lihat browser-nya
+        context = await browser.new_context()
+        page = await context.new_page()
 
-def login(email, password):
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
+        # 1. Buka halaman login
+        await page.goto("https://app.monami.io/users/sign_in")
+        await page.wait_for_load_state("networkidle")
 
-    # Ambil token jika ada di endpoint login Monami App
-    name, value = get_csrf_token(session, APP_SIGNIN)
-    payload = {
-        "user[email]": email,
-        "user[password]": password,
-    }
-    if name:
-        payload[name] = value
+        # 2. Isi form login
+        await page.fill('input[name="user[email]"]', EMAIL)
+        await page.fill('input[name="user[password]"]', PASSWORD)
+        await page.click('input[name="commit"]')  # Tombol login
 
-    resp = session.post(APP_SIGNIN, data=payload, allow_redirects=True)
-    if resp.url != APP_SIGNIN and resp.status_code == 200:
-        print("✅ Login berhasil — ter-redirect ke app URL.")
-        return session
-    print("❌ Gagal login — cek email/password atau token.")
-    return None
+        # 3. Tunggu redirect atau verifikasi
+        try:
+            await page.wait_for_url("https://app.monami.io/dashboard", timeout=10000)
+            print("✅ Berhasil login dan masuk dashboard!")
+        except:
+            print("❌ Gagal login atau halaman tidak redirect ke dashboard.")
+            await page.screenshot(path="login_failed.png")
+            await browser.close()
+            return
 
-def fetch_dashboard(session):
-    url = "https://app.monami.io/dashboard"
-    resp = session.get(url)
-    if resp.status_code == 200 and "Sign out" in resp.text:
-        print("🔒 Dashboard berhasil dibuka.")
-    else:
-        print("⚠️ Gagal membuka dashboard — mungkin belum login.")
+        # 4. Ambil konten dashboard
+        content = await page.content()
+        print("\n=== Cuplikan Konten Dashboard ===")
+        print(content[:1000])  # Cetak sebagian HTML
+
+        # Optional: Simpan screenshot dashboard
+        await page.screenshot(path="dashboard.png")
+        print("📸 Screenshot disimpan sebagai dashboard.png")
+
+        await browser.close()
 
 if __name__ == "__main__":
-    EMAIL = input("Email: ").strip()
-    PASSWORD = input("Password: ").strip()
-    sess = login(EMAIL, PASSWORD)
-    if sess:
-        fetch_dashboard(sess)
+    asyncio.run(run())
